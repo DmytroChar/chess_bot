@@ -43,6 +43,8 @@ public class Board {
     private Team teamIsMoving;
 
     private float timer = 0.0f;
+    private boolean isGameOver = false;
+    private Position checkmateKingPosition;
 
     public Board() {
         pieces = new DefaultPiece[8][8];
@@ -124,28 +126,59 @@ public class Board {
     }
 
     public void update(MouseListener mouseListener, float delta) {
+        if (isGameOver) {
+            return; // Если игра закончена, не обрабатываем ходы
+        }
+
         Coords coords = getCoords();
         hoverX = (int) Math.floor((float) (mouseListener.getCurrentX() - coords.x) / (float) BOARD_SIZE * pieces.length);
         hoverY = (int) Math.floor((float) (mouseListener.getCurrentY() - coords.y) / (float) BOARD_SIZE * pieces[0].length);
 
+        // Проверяем шах и мат
+        boolean isCheck = isKingInCheck(teamIsMoving);
+        boolean isCheckmate = isCheckmate(teamIsMoving);
+
+        if (isCheckmate) {
+            System.out.println("Checkmate! " + teamIsMoving + " loses!");
+            checkmateKingPosition = findKing(teamIsMoving);
+            isGameOver = true;
+        } else if (isCheck) {
+            System.out.println("Check! " + teamIsMoving + " king is in danger!");
+        }
+
         if (hoverX >= 0 && hoverX < pieces.length && hoverY >= 0 && hoverY < pieces[0].length) {
-            if (mouseListener.isButtonPressed(MouseListener.BUTTON_LEFT)) {
+            // Проверяем, была ли только что нажата кнопка мыши
+            if (mouseListener.isButtonJustPressed()) {
+                mouseListener.consumeButtonPress(); // Потребляем нажатие кнопки
+                
+                // Если фигура не выбрана
                 if (selectedX == -1 && selectedY == -1) {
                     if (getPiece(hoverX, hoverY) != null && getPiece(hoverX, hoverY).getTeam() == teamIsMoving) {
                         selectedX = hoverX;
                         selectedY = hoverY;
                         selectedMoves = getPiece(selectedX, selectedY).getPossibleMoves(false);
                     }
-                } else {
-                    for (Position selectedMove : selectedMoves) {
-                        if (hoverX == selectedMove.x && hoverY == selectedMove.y) {
-                            getPiece(selectedX, selectedY).moveTo(hoverX, hoverY);
-                            break;
+                }
+                // Если фигура выбрана
+                else {
+                    // Проверяем отмену выбора
+                    if (hoverX == selectedX && hoverY == selectedY) {
+                        selectedX = -1;
+                        selectedY = -1;
+                        selectedMoves = null;
+                    }
+                    // Проверяем ходы
+                    else {
+                        for (Position selectedMove : selectedMoves) {
+                            if (hoverX == selectedMove.x && hoverY == selectedMove.y) {
+                                getPiece(selectedX, selectedY).moveTo(hoverX, hoverY);
+                                selectedX = -1;
+                                selectedY = -1;
+                                selectedMoves = null;
+                                break;
+                            }
                         }
                     }
-                    selectedX = -1;
-                    selectedY = -1;
-                    selectedMoves = null;
                 }
             }
         }
@@ -159,7 +192,7 @@ public class Board {
         if (teamIsMoving == Team.BLACK) {
             timer += delta;
         }
-        if (timer > 0.5f) {
+        if (timer > 0.5f && !isGameOver) {
             timer = 0.0f;
             long start = System.nanoTime();
             apply(BoardRating.getBestMove(this, teamIsMoving, 2));
@@ -167,11 +200,28 @@ public class Board {
             long elapsedTime = end - start;
             System.out.println(TimeUnit.MILLISECONDS.convert(elapsedTime, TimeUnit.NANOSECONDS));
         }
+        
+        // Обновляем состояние мыши
+        mouseListener.refresh();
     }
     record Coords(int x, int y) {}
 
     private Coords getCoords(){
         return new Coords(ChessApp.instance.getWidth() / 2 - BOARD_SIZE / 2, ChessApp.instance.getHeight() / 2 - BOARD_SIZE / 2);
+    }
+
+    private void renderGameOverMessage(Graphics2D g) {
+        g.setColor(Color.RED);
+        g.setFont(new Font("Arial", Font.BOLD, 36));
+        String message = "Game Over! " + teamIsMoving + " wins!";
+        FontMetrics metrics = g.getFontMetrics();
+        int stringWidth = metrics.stringWidth(message);
+        int stringHeight = metrics.getHeight();
+        
+        int x = ChessApp.instance.getWidth() / 2 - stringWidth / 2;
+        int y = ChessApp.instance.getHeight() / 2 - stringHeight / 2;
+        
+        g.drawString(message, x, y);
     }
 
     public void render(Graphics2D g) {
@@ -216,17 +266,25 @@ public class Board {
             g.drawRect(boardX + hoverX * cellWidth, boardY + hoverY * cellHeight, cellWidth - 1, cellHeight - 1);
             g.setStroke(new BasicStroke(1.0f));
         }
+
+        if (isGameOver) {
+            g.setColor(Color.RED);
+            g.fillRect(boardX + checkmateKingPosition.x * cellWidth, boardY + checkmateKingPosition.y * cellHeight, cellWidth, cellHeight);
+            renderGameOverMessage(g);
+        }
     }
     public boolean isKingInCheck(Team team) {
         Position kingPosition = findKing(team);
         if (kingPosition == null) {
             return false;
         }
+
         for (int x = 0; x < pieces.length; x++) {
             for (int y = 0; y < pieces[0].length; y++) {
                 DefaultPiece piece = getPiece(x, y);
                 if (piece != null && piece.getTeam() != team) {
-                    ArrayList<Position> moves = piece.getPossibleMoves(false);
+                    // Получаем возможные ходы с учетом шаха
+                    ArrayList<Position> moves = piece.getPossibleMoves(true);
                     for (Position move : moves) {
                         if (move.equals(kingPosition)) {
                             return true;
